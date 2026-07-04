@@ -956,9 +956,9 @@ Rules:
 - condition must be one of: New, Like New, Good, Fair, Poor
 - If unsure, make your best guess and set confidence to "low"`;
 
-      const idResp = await fetch('https://api.anthropic.com/v1/messages',{
+      const idResp = await fetch('/api/claude',{
         method:'POST',
-        headers:{'Content-Type':'application/json'},
+        headers:{'Content-Type':'application/json','x-api-key':getAPIKey()},
         body:JSON.stringify({
           model:'claude-sonnet-4-6',
           max_tokens:800,
@@ -1038,9 +1038,9 @@ Rules:
 - CEX price = their selling price (not buy price)
 - confidence: high=found real listings, medium=estimated from similar, low=no data found`;
 
-    const prResp = await fetch('https://api.anthropic.com/v1/messages',{
+    const prResp = await fetch('/api/claude',{
       method:'POST',
-      headers:{'Content-Type':'application/json'},
+      headers:{'Content-Type':'application/json','x-api-key':getAPIKey()},
       body:JSON.stringify({
         model:'claude-sonnet-4-6',
         max_tokens:2500,
