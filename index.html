@@ -1021,22 +1021,32 @@ Rules:
 
 
   try {
-    const pricePrompt = `You are a UK retail arbitrage price researcher. Use web search to find CURRENT listings and recently sold prices for this product on UK marketplaces.
+    const pricePrompt = `You are a UK retail arbitrage price researcher. Search the web RIGHT NOW to find live prices for this exact product on UK marketplaces.
 
 Product: ${detected.name}
 Category: ${detected.category}
 Condition: ${detected.condition}
 Notes: ${notes||'none'}
 
-Search eBay UK sold listings, Amazon UK, Vinted UK, Gumtree UK, Depop UK, CEX UK, OnBuy UK, and Shpock UK for this product. Then return ONLY a raw JSON object — no markdown, no text before or after:
-{"ebay":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"high","note":"source note","fee_pct":12.8,"fixed_fee":0.30,"refs":[{"title":"Item title","url":"https://www.ebay.co.uk/...","price":0.00}]},"amazon":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"high","note":"source note","fee_pct":15,"fixed_fee":0,"refs":[{"title":"Item title","url":"https://www.amazon.co.uk/...","price":0.00}]},"vinted":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"medium","note":"source note","fee_pct":5,"fixed_fee":0,"refs":[{"title":"Item title","url":"https://www.vinted.co.uk/...","price":0.00}]},"facebook":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"low","note":"No direct search available","fee_pct":0,"fixed_fee":0,"refs":[]},"gumtree":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"medium","note":"source note","fee_pct":0,"fixed_fee":0,"refs":[{"title":"Item title","url":"https://www.gumtree.com/...","price":0.00}]},"depop":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"medium","note":"source note","fee_pct":10,"fixed_fee":0,"refs":[{"title":"Item title","url":"https://www.depop.com/...","price":0.00}]},"cex":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"high","note":"CEX selling price","fee_pct":0,"fixed_fee":0,"refs":[{"title":"Item title","url":"https://uk.webuy.com/...","price":0.00}]},"onbuy":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"medium","note":"source note","fee_pct":9,"fixed_fee":0,"refs":[{"title":"Item title","url":"https://www.onbuy.com/...","price":0.00}]},"shpock":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"low","note":"source note","fee_pct":0,"fixed_fee":0,"refs":[{"title":"Item title","url":"https://www.shpock.com/...","price":0.00}]},"best_marketplace":"eBay","reasoning":"Which marketplace gives the best profit for this specific product and why."}
+IMPORTANT: You MUST run web searches before answering. Search for:
+1. "${detected.name} site:ebay.co.uk" — look at actual listed/sold prices
+2. "${detected.name} site:amazon.co.uk" — look at the buy box price
+3. "${detected.name} site:uk.webuy.com" — CEX selling price
+4. "${detected.name} site:vinted.co.uk" — recent listings
 
-Rules:
-- refs: up to 3 real listing URLs found per marketplace. Empty array [] if none found.
-- price: conservative average of recently SOLD or current listed prices in GBP
-- Set price to 0 if this marketplace is genuinely unsuitable for this product type
-- CEX price = their selling price (not buy price)
-- confidence: high=found real listings, medium=estimated from similar, low=no data found`;
+For each search result you find, extract the EXACT price shown on that page. Use those real prices — do NOT estimate or use training data prices.
+
+After searching, return ONLY a raw JSON object with no markdown, no text outside the JSON:
+{"ebay":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"high","note":"e.g. 3 sold listings found: £185, £190, £195","fee_pct":12.8,"fixed_fee":0.30,"refs":[{"title":"Exact listing title from search result","url":"exact URL from search result","price":0.00}]},"amazon":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"high","note":"source note","fee_pct":15,"fixed_fee":0,"refs":[{"title":"Exact listing title","url":"exact URL","price":0.00}]},"vinted":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"medium","note":"source note","fee_pct":5,"fixed_fee":0,"refs":[{"title":"Exact listing title","url":"exact URL","price":0.00}]},"facebook":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"low","note":"No direct search available","fee_pct":0,"fixed_fee":0,"refs":[]},"gumtree":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"medium","note":"source note","fee_pct":0,"fixed_fee":0,"refs":[{"title":"Exact listing title","url":"exact URL","price":0.00}]},"depop":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"medium","note":"source note","fee_pct":10,"fixed_fee":0,"refs":[{"title":"Exact listing title","url":"exact URL","price":0.00}]},"cex":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"high","note":"CEX selling price from webuy.com","fee_pct":0,"fixed_fee":0,"refs":[{"title":"Exact listing title","url":"exact URL","price":0.00}]},"onbuy":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"medium","note":"source note","fee_pct":9,"fixed_fee":0,"refs":[{"title":"Exact listing title","url":"exact URL","price":0.00}]},"shpock":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"low","note":"source note","fee_pct":0,"fixed_fee":0,"refs":[{"title":"Exact listing title","url":"exact URL","price":0.00}]},"best_marketplace":"eBay","reasoning":"1-2 sentences: which marketplace has the best prices right now and why, based on what you actually found in search results."}
+
+Critical rules:
+- refs must contain REAL URLs from your search results — not made up, not placeholders with "..."
+- price in each ref must be the EXACT price shown on that page
+- The top-level price must be the average of your ref prices — so it matches what you found
+- confidence=high only if you found 2+ real listings with actual prices
+- confidence=medium if you found 1 listing or had to estimate
+- confidence=low if you found nothing — set price to 0 in that case
+- note field should say what you actually found, e.g. "3 listings found: £185-£195"`;
 
     const prResp = await fetch('/api/claude',{
       method:'POST',
@@ -1063,14 +1073,28 @@ Rules:
     const prText = (prData.content||[]).map(c=>c.type==='text'?c.text:'').filter(Boolean).join('');
     if(!prText) throw new Error('Empty price research response');
     aiPrices = safeParseJSON(prText);
-    // Strip any hallucinated URLs — only keep refs with real-looking URLs
+    // Strip placeholder/hallucinated URLs — keep only real ones
     ['ebay','amazon','vinted','facebook','gumtree','depop','cex','onbuy','shpock'].forEach(k=>{
       if(!aiPrices[k]) return;
       if(!aiPrices[k].refs) aiPrices[k].refs=[];
-      // Filter out placeholder/hallucinated URLs
       aiPrices[k].refs = aiPrices[k].refs.filter(r=>
-        r.url && r.url.startsWith('http') && !r.url.includes('...') && r.url.length > 20
+        r.url &&
+        r.url.startsWith('http') &&
+        !r.url.includes('...') &&
+        !r.url.endsWith('/') &&
+        r.url.length > 25 &&
+        r.price > 0
       );
+      // Recalculate top-level price from real refs if we have them
+      if(aiPrices[k].refs.length > 0) {
+        const prices = aiPrices[k].refs.map(r=>parseFloat(r.price)).filter(p=>p>0);
+        if(prices.length > 0) {
+          aiPrices[k].price = parseFloat((prices.reduce((a,b)=>a+b,0)/prices.length).toFixed(2));
+          aiPrices[k].range_low = parseFloat(Math.min(...prices).toFixed(2));
+          aiPrices[k].range_high = parseFloat(Math.max(...prices).toFixed(2));
+          aiPrices[k].confidence = prices.length >= 2 ? 'high' : 'medium';
+        }
+      }
     });
 
   } catch(e){
@@ -1204,11 +1228,16 @@ function renderMPTiles(){
         <div class="mp-conf badge ${confCls}">${d.confidence}</div>
         <div class="mp-name" style="margin-top:${isBest?'12px':'0'}">${mp.label}</div>
         <div class="mp-price">£${d.price.toFixed(2)}</div>
-        <div class="mp-range">£${d.range_low.toFixed(2)}–£${d.range_high.toFixed(2)}</div>
+        <div class="mp-range">£${d.range_low.toFixed(2)} – £${d.range_high.toFixed(2)}</div>
+        <div style="font-size:10px;margin-top:4px;color:${(d.refs&&d.refs.length>0)?'var(--buy)':'var(--watch)'}">
+          ${(d.refs&&d.refs.length>0)
+            ? '✅ '+d.refs.length+' real listing'+(d.refs.length>1?'s':'')+' found'
+            : '⚠️ AI estimate — verify below'}
+        </div>
         <div style="margin-top:8px" onclick="event.stopPropagation()">
-          <a href="${buildSearchUrl(mp.key, detected?.name||'')}" target="_blank" rel="noopener"
+          <a href="${buildSearchUrl(mp.key, detected?.name||'')} " target="_blank" rel="noopener"
             class="view-listings-btn">
-            🔍 View listings ↗
+            🔍 Verify on ${mp.label} ↗
           </a>
         </div>
         <div class="mp-check">✓</div>
