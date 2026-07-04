@@ -260,6 +260,7 @@ nav{background:var(--surface);border-bottom:1px solid var(--border);padding:0 24
     <button class="nav-link" id="nl-analyze" onclick="goTo('analyze')">Analyse Deal</button>
   </div>
   <span class="deal-count" id="deal-cnt">0 deals</span>
+  <button onclick="showAPIKeyModal()" style="background:none;border:1px solid var(--border);border-radius:var(--rs);padding:5px 10px;color:var(--muted);cursor:pointer;font-size:12px;transition:all .15s" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">⚙️ API Key</button>
 </nav>
 
 <!-- ═══════════════════════════ ANALYSE ═══════════════════════════ -->
@@ -559,6 +560,32 @@ nav{background:var(--surface);border-bottom:1px solid var(--border);padding:0 24
 
 <div class="toast" id="toast"></div>
 
+<!-- API KEY MODAL -->
+<div id="apikey-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:1000;align-items:center;justify-content:center;padding:20px">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:24px;width:100%;max-width:420px">
+    <div style="font-size:16px;font-weight:700;margin-bottom:6px">🔑 Anthropic API Key</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:16px;line-height:1.5">
+      Enter your API key from <a href="https://console.anthropic.com/keys" target="_blank" style="color:var(--accent)">console.anthropic.com/keys</a>.<br>
+      Stored only on this device in localStorage — never sent anywhere except Anthropic.
+    </div>
+    <input id="apikey-input" type="password"
+      style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:var(--rs);padding:10px 12px;color:var(--text);font-size:13px;font-family:monospace;outline:none;margin-bottom:8px"
+      placeholder="sk-ant-api03-..."
+      onfocus="this.style.borderColor='var(--accent)'"
+      onblur="this.style.borderColor='var(--border)'"
+      onkeydown="if(event.key==='Enter')saveAPIKey()">
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:14px">
+      <input type="checkbox" id="show-key" onchange="document.getElementById('apikey-input').type=this.checked?'text':'password'">
+      <label for="show-key" style="font-size:12px;color:var(--muted);cursor:pointer">Show key</label>
+      <span id="apikey-status" style="margin-left:auto;font-size:11px;color:var(--buy)"></span>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button onclick="hideAPIKeyModal()" style="flex:1;padding:9px;border-radius:var(--rs);border:1px solid var(--border);background:var(--surface2);color:var(--text);cursor:pointer;font-size:13px">Cancel</button>
+      <button onclick="saveAPIKey()" style="flex:2;padding:9px;border-radius:var(--rs);border:none;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;cursor:pointer;font-size:13px;font-weight:600">Save &amp; Continue</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ── CONFIG ────────────────────────────────────────────────────
 // ── API KEY — stored in localStorage, never hardcoded ────────
@@ -832,7 +859,35 @@ function setProgress(pct, lbl){
   document.getElementById('progress-lbl').textContent=lbl;
 }
 
-// ── RATE LIMIT BANNER ────────────────────────────────────────
+// ── API KEY MODAL ─────────────────────────────────────────────
+function showAPIKeyModal() {
+  const modal = document.getElementById('apikey-modal');
+  modal.style.display = 'flex';
+  const input = document.getElementById('apikey-input');
+  input.value = getAPIKey();
+  const status = document.getElementById('apikey-status');
+  status.textContent = getAPIKey() ? '✅ Key saved' : '';
+  setTimeout(() => input.focus(), 100);
+}
+function hideAPIKeyModal() {
+  document.getElementById('apikey-modal').style.display = 'none';
+}
+function saveAPIKey() {
+  const val = document.getElementById('apikey-input').value.trim();
+  if (!val) { showToast('⚠️ Please enter your API key'); return; }
+  if (!val.startsWith('sk-ant-')) { showToast('⚠️ Key should start with sk-ant-'); return; }
+  setAPIKey(val);
+  document.getElementById('apikey-status').textContent = '✅ Saved!';
+  showToast('✅ API key saved');
+  setTimeout(hideAPIKeyModal, 800);
+}
+// Close modal on backdrop click
+document.addEventListener('click', e => {
+  const modal = document.getElementById('apikey-modal');
+  if (e.target === modal) hideAPIKeyModal();
+});
+
+// ── RATE LIMIT BANNER ─────────────────────────────────────────
 function showRateLimit(resetTime) {
   document.getElementById('research-loading').style.display='none';
   document.getElementById('mp-section').style.display='none';
@@ -901,9 +956,9 @@ Rules:
 - condition must be one of: New, Like New, Good, Fair, Poor
 - If unsure, make your best guess and set confidence to "low"`;
 
-      const idResp = await fetch('/api/claude',{
+      const idResp = await fetch('https://api.anthropic.com/v1/messages',{
         method:'POST',
-        headers:{'Content-Type':'application/json','x-api-key':getAPIKey()},
+        headers:{'Content-Type':'application/json'},
         body:JSON.stringify({
           model:'claude-sonnet-4-6',
           max_tokens:800,
@@ -983,9 +1038,9 @@ Rules:
 - CEX price = their selling price (not buy price)
 - confidence: high=found real listings, medium=estimated from similar, low=no data found`;
 
-    const prResp = await fetch('/api/claude',{
+    const prResp = await fetch('https://api.anthropic.com/v1/messages',{
       method:'POST',
-      headers:{'Content-Type':'application/json','x-api-key':getAPIKey()},
+      headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
         model:'claude-sonnet-4-6',
         max_tokens:2500,
@@ -1501,6 +1556,8 @@ function showToast(m){ const t=document.getElementById('toast'); t.textContent=m
 
 goTo('analyze');
 renderDB();
+// Prompt for API key on first load
+if(!getAPIKey()) setTimeout(showAPIKeyModal, 600);
 </script>
 </body>
 </html>
