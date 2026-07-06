@@ -504,7 +504,10 @@ function handleFile(file){
       if(w>MAX||h>MAX){if(w>h){h=Math.round(h*MAX/w);w=MAX;}else{w=Math.round(w*MAX/h);h=MAX;}}
       const cv=document.createElement('canvas');cv.width=w;cv.height=h;
       cv.getContext('2d').drawImage(img,0,0,w,h);
-      const comp=cv.toDataURL('image/jpeg',0.85);
+      // Compress to jpeg — try 0.8 quality, drop to 0.6 if still over 500KB
+      let comp=cv.toDataURL('image/jpeg',0.80);
+      if(comp.length>700000) comp=cv.toDataURL('image/jpeg',0.60);
+      if(comp.length>700000) comp=cv.toDataURL('image/jpeg',0.40);
       imgB64=comp.split(',')[1];
       const kb=Math.round(imgB64.length*.75/1024);
       document.getElementById('pimg').src=comp;
