@@ -722,7 +722,13 @@ async function callAPI(body){
   // Our prompt has exactly 5 numbered search instructions (eBay, Amazon, Vinted, CEX, Depop).
   // Vision/identify call never uses web search so searchCount = 0 for that call.
   let searchCount = 0;
-  if(hasWebSearch) searchCount = 5;
+  if(hasWebSearch){
+    // Use the real count injected by the Vercel proxy (most accurate)
+    // Falls back to 10 if proxy didn't inject it
+    searchCount = (d.usage?._web_search_count > 0)
+      ? d.usage._web_search_count
+      : 10;
+  }
 
   if(d.usage) trackUsage(d.usage, searchCount);
   return d;
