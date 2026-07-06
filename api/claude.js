@@ -1,3 +1,11 @@
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: '10mb',  // images can be large as base64
+    },
+  },
+};
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -27,8 +35,7 @@ export default async function handler(req, res) {
 
     const data = await response.json();
 
-    // Count actual web search calls from the response
-    // server_tool_use blocks = each individual search Anthropic made
+    // Count actual web search calls — server_tool_use blocks = each individual search
     let webSearchCount = 0;
     if (data.content && Array.isArray(data.content)) {
       webSearchCount = data.content.filter(block =>
@@ -36,8 +43,6 @@ export default async function handler(req, res) {
         (block.type === 'tool_use' && block.name === 'web_search')
       ).length;
     }
-
-    // Inject the real search count into the response so the client can use it exactly
     if (data.usage) {
       data.usage._web_search_count = webSearchCount;
     }
