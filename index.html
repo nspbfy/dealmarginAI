@@ -627,8 +627,16 @@ function cmult(c){return CMULT[c]||1.0;}
 function safeJ(text){
   let s=text.replace(/```json\s*/gi,'').replace(/```\s*/g,'').trim();
   const a=s.indexOf('{'),b=s.lastIndexOf('}');
-  if(a===-1||b===-1||b<a)throw new Error('No JSON in: '+s.slice(0,80));
-  return JSON.parse(s.slice(a,b+1));
+  if(a===-1||b===-1||b<a){
+    console.error('safeJ: no JSON found in response. Got:',s.slice(0,300));
+    throw new Error('No JSON found in AI response');
+  }
+  try{
+    return JSON.parse(s.slice(a,b+1));
+  }catch(parseErr){
+    console.error('safeJ: JSON parse failed:',parseErr.message,'\nRaw:',s.slice(a,a+300));
+    throw new Error('JSON parse failed: '+parseErr.message);
+  }
 }
 function surl(k,name,size){
   const q=encodeURIComponent(name+(size?' '+size:''));
@@ -850,7 +858,7 @@ CRITICAL RULES:
 - For eBay/Vinted: only include listings matching condition "${selCond}" ${selSize?'and size '+selSize:''}
 - refs must be real URLs from search results (no placeholders with ...)
 - Set price=0 if marketplace is not suitable for this product`;
-    const pr=await callAPI({model:'claude-sonnet-4-6',max_tokens:3000,tools:[{type:'web_search_20250305',name:'web_search'}],messages:[{role:'user',content:pp}]});
+    const pr=await callAPI({model:'claude-sonnet-4-6',max_tokens:8000,tools:[{type:'web_search_20250305',name:'web_search'}],messages:[{role:'user',content:pp}]});
     if(pr._rl){showRL(pr._rt);return;}
     const pt=(pr.content||[]).map(c=>c.type==='text'?c.text:'').filter(Boolean).join('');
     if(!pt)throw new Error('Empty price response');
@@ -864,7 +872,13 @@ CRITICAL RULES:
         if(prices.length){aiPrices[k].price=parseFloat((prices.reduce((a,b)=>a+b,0)/prices.length).toFixed(2));aiPrices[k].range_low=parseFloat(Math.min(...prices).toFixed(2));aiPrices[k].range_high=parseFloat(Math.max(...prices).toFixed(2));aiPrices[k].confidence=prices.length>=2?'high':'medium';}
       }
     });
-  }catch(e){if(e._rl){showRL(e._rt);return;}console.warn('Price fallback',e);aiPrices=fallback(bp,detected.category,condM);}
+  }catch(e){
+    if(e._rl){showRL(e._rt);return;}
+    console.error('Price research error:',e.message,e);
+    // Show error in the pipeline so user knows what happened
+    setSt('res','done','⚠️ Research failed — using estimates. Error: '+e.message.slice(0,60));
+    aiPrices=fallback(bp,detected.category,condM);
+  }
 
   setSt('res','done','Prices found — select marketplace');setP(80,'Select marketplace');
   renderMP();document.getElementById('scanbtn').disabled=false;hideP();
