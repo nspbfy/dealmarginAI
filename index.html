@@ -190,8 +190,9 @@ nav{background:var(--surface);border-bottom:1px solid var(--border);padding:0 14
   <button class="nav-link" id="nl-portfolio" onclick="goTo('portfolio')">💰 P&L</button>
   <div class="nav-right">
     <span class="deal-badge" id="deal-cnt">0</span>
+    <span class="nav-btn" id="cost-badge" title="Total API cost this session" style="cursor:default;color:var(--muted)">$0.0000</span>
     <button class="nav-btn" onclick="exportCSV()">⬇ CSV</button>
-    <button class="nav-btn" onclick="openModal('km')">⚙️ API Key</button>
+    <button class="nav-btn" onclick="openModal('km')">⚙️ Key</button>
   </div>
 </nav>
 <!-- ANALYSE PAGE -->
@@ -256,6 +257,7 @@ nav{background:var(--surface);border-bottom:1px solid var(--border);padding:0 14
         <div style="padding:11px 13px 13px;display:flex;flex-direction:column;gap:5px">
           <button class="btn btn-primary btn-full" id="scanbtn" onclick="runScan()" style="font-size:14px;padding:11px">🔍 Scan &amp; Research Prices</button>
           <div style="font-size:11px;color:var(--muted);text-align:center">AI identifies + searches 9 UK marketplaces</div>
+          <div style="font-size:10px;color:var(--muted);text-align:center;margin-top:3px" id="scan-cost-display"></div>
         </div>
       </div>
       <div class="card" id="ddc" style="display:none">
@@ -266,7 +268,10 @@ nav{background:var(--surface);border-bottom:1px solid var(--border);padding:0 14
             <div><label class="fl">Buy Price *</label><div class="pfx"><span class="pl">£</span><input class="fi" id="f-buy" type="number" min="0" step=".01" placeholder="0.00" oninput="chkVAT()"></div></div>
             <div><label class="fl">Quantity</label><input class="fi" id="f-qty" type="number" min="1" value="1"></div>
           </div>
-          <div style="margin-bottom:9px"><label class="fl">Store Name</label><input class="fi" id="f-store" type="text" placeholder="e.g. Argos, TK Maxx"></div>
+          <div class="fr" style="margin-bottom:9px">
+            <div><label class="fl">Store Name</label><input class="fi" id="f-store" type="text" placeholder="e.g. Argos, TK Maxx"></div>
+            <div><label class="fl">Size / Variant <span style="color:var(--muted);font-weight:400">(optional)</span></label><input class="fi" id="f-size" type="text" placeholder="e.g. XL, UK 10, 500ml"></div>
+          </div>
           <div><label class="fl">Notes</label><textarea class="ft" id="f-notes" placeholder="Any extra info..."></textarea></div>
         </div>
       </div>
@@ -603,14 +608,32 @@ function safeJ(text){
   if(a===-1||b===-1||b<a)throw new Error('No JSON in: '+s.slice(0,80));
   return JSON.parse(s.slice(a,b+1));
 }
-function surl(k,name){
-  const q=encodeURIComponent(name);
+function surl(k,name,size){
+  const q=encodeURIComponent(name+(size?' '+size:''));
   return {ebay:`https://www.ebay.co.uk/sch/i.html?_nkw=${q}&LH_Sold=1&LH_Complete=1&_sop=13`,amazon:`https://www.amazon.co.uk/s?k=${q}`,vinted:`https://www.vinted.co.uk/catalog?search_text=${q}`,facebook:`https://www.facebook.com/marketplace/search/?query=${q}`,gumtree:`https://www.gumtree.com/search?search_category=all&q=${q}`,depop:`https://www.depop.com/search/?q=${q}`,cex:`https://uk.webuy.com/search?q=${q}`,onbuy:`https://www.onbuy.com/gb/search/?q=${q}`,shpock:`https://www.shpock.com/en-gb/search?q=${q}`}[k]||`https://www.google.com/search?q=${q}+UK`;
 }
 function mico(k){return {ebay:'🛒',amazon:'📦',vinted:'👗',facebook:'👥',gumtree:'🏠',depop:'👟',cex:'💿',onbuy:'🛍️',shpock:'📱'}[k]||'🔗';}
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function fmtP(v){return `<span class="${v>=0?'pos':'neg'}">£${v.toFixed(2)}</span>`;}
 function showToast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('on');setTimeout(()=>t.classList.remove('on'),2800);}
+
+// ── COST TRACKER ─────────────────────────────────────────────
+// Sonnet 4 pricing: $3/M input tokens, $15/M output tokens
+const COST_IN=3/1000000, COST_OUT=15/1000000;
+let sessionCost=0, sessionScans=0, scanCost=0;
+function trackUsage(usage){
+  if(!usage)return;
+  const cost=(usage.input_tokens||0)*COST_IN+(usage.output_tokens||0)*COST_OUT;
+  scanCost+=cost; sessionCost+=cost;
+  updateCostBadge();
+}
+function startScanCost(){ scanCost=0; }
+function updateCostBadge(){
+  const el=document.getElementById('cost-badge');
+  if(el) el.textContent='~$'+sessionCost.toFixed(4)+' total';
+  const se=document.getElementById('scan-cost-display');
+  if(se) se.textContent='This scan: ~$'+scanCost.toFixed(4)+' (£'+((scanCost*0.79)).toFixed(4)+')';
+}
 
 // ── API CALL ─────────────────────────────────────────────────
 async function callAPI(body){
@@ -625,6 +648,8 @@ async function callAPI(body){
     }
     throw new Error(JSON.stringify(d.error));
   }
+  // Track token usage for cost display
+  if(d.usage) trackUsage(d.usage);
   return d;
 }
 
@@ -664,6 +689,7 @@ async function runScan(){
   document.getElementById('scanbtn').disabled=true;
   document.getElementById('mpsec').style.display='none';document.getElementById('feesec').style.display='none';
   document.getElementById('rc').classList.remove('visible');document.getElementById('ratebanner').style.display='none';
+  startScanCost(); sessionScans++;
 
   // STEP 1: IDENTIFY (photo mode only)
   if(mode==='photo'){
@@ -695,17 +721,32 @@ async function runScan(){
   setSt('res','active','Searching eBay, Amazon, Vinted, CEX...');setP(60,'Researching UK resale prices...');
   const condM=cmult(selCond);const notes=document.getElementById('f-notes').value.trim();
   try{
-    const pp=`You are a UK retail arbitrage price researcher. Use web search to find CURRENT live prices for this product on UK marketplaces.
+    const selSize=document.getElementById('f-size')?.value.trim()||'';
+    const sizeNote=selSize?`Size/Variant: ${selSize}. IMPORTANT: Only include listings for exactly this size/variant in your search.`:'';
+    const condSearch=selCond==='New'?'new sealed':selCond==='Like New'?'like new excellent condition':selCond==='Good'?'good used condition':selCond==='Fair'?'fair used condition':'poor spares or repairs';
+    const pp=`You are a UK retail arbitrage price researcher. Use web search to find CURRENT live prices.
+
 Product: ${detected.name}
-Condition: ${selCond} (apply this condition to price estimates)
+Condition being sold: ${selCond} — search for "${condSearch}" listings
+${sizeNote}
 Category: ${detected.category}
 Notes: ${notes||'none'}
 
-Search: "${detected.name}" site:ebay.co.uk sold listings, site:amazon.co.uk, site:uk.webuy.com, site:vinted.co.uk
+SEARCH INSTRUCTIONS:
+1. eBay UK: search "${detected.name}${selSize?' '+selSize:''}" with filter "Sold listings" and condition "${selCond==='New'?'New':'Used'}" — use SOLD prices not asking prices
+2. Amazon UK: search "${detected.name}${selSize?' '+selSize:''}" — CRITICAL: report the CURRENT selling price (after any discounts/sales), NOT the original RRP. If you see "Was £X now £Y", report £Y. Also note if there is a current discount.
+3. Vinted UK: search "${detected.name}${selSize?' '+selSize:''}" condition "${condSearch}" — use recently sold or listed prices
+4. CEX UK: search "${detected.name}${selSize?' '+selSize:''}" — report their SELL price (what they charge customers)
+5. Depop: search "${detected.name}${selSize?' '+selSize:''}" condition "${selCond==='New'?'new with tags':'used'}"
 
 Return ONLY raw JSON no markdown:
-{"ebay":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"high","note":"what found","fee_pct":${efee(detected.category)},"fixed_fee":0.30,"refs":[{"title":"title","url":"real url","price":0.00}]},"amazon":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"high","note":"what found","fee_pct":15,"fixed_fee":0,"refs":[{"title":"title","url":"real url","price":0.00}]},"vinted":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"medium","note":"what found","fee_pct":5,"fixed_fee":0,"refs":[]},"facebook":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"low","note":"estimated","fee_pct":0,"fixed_fee":0,"refs":[]},"gumtree":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"low","note":"estimated","fee_pct":0,"fixed_fee":0,"refs":[]},"depop":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"medium","note":"what found","fee_pct":10,"fixed_fee":0,"refs":[]},"cex":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"high","note":"CEX sell price","fee_pct":0,"fixed_fee":0,"refs":[{"title":"title","url":"real url","price":0.00}]},"onbuy":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"medium","note":"estimated","fee_pct":9,"fixed_fee":0,"refs":[]},"shpock":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"low","note":"estimated","fee_pct":0,"fixed_fee":0,"refs":[]},"best_marketplace":"eBay","reasoning":"Best marketplace for this product and why."}
-CRITICAL: refs must be real URLs from search results. price must match what you found. Set price=0 if not suitable.`;
+{"ebay":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"high","note":"X sold listings found at £Y-£Z for ${selCond} condition${selSize?' size '+selSize:''}","fee_pct":${efee(detected.category)},"fixed_fee":0.30,"refs":[{"title":"exact listing title","url":"real ebay url","price":0.00}]},"amazon":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"high","note":"Current price £X (was £Y, Z% off) or 'No discount'","fee_pct":15,"fixed_fee":0,"amazon_rrp":0.00,"amazon_current":0.00,"amazon_discount_pct":0,"refs":[{"title":"exact listing title","url":"real amazon url","price":0.00}]},"vinted":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"medium","note":"what found for ${condSearch}","fee_pct":5,"fixed_fee":0,"refs":[]},"facebook":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"low","note":"estimated","fee_pct":0,"fixed_fee":0,"refs":[]},"gumtree":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"low","note":"estimated","fee_pct":0,"fixed_fee":0,"refs":[]},"depop":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"medium","note":"what found for ${selCond==='New'?'new with tags':'used'}","fee_pct":10,"fixed_fee":0,"refs":[]},"cex":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"high","note":"CEX sell price","fee_pct":0,"fixed_fee":0,"refs":[{"title":"CEX listing","url":"real cex url","price":0.00}]},"onbuy":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"medium","note":"estimated","fee_pct":9,"fixed_fee":0,"refs":[]},"shpock":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"low","note":"estimated","fee_pct":0,"fixed_fee":0,"refs":[]},"best_marketplace":"eBay","reasoning":"Which marketplace is best right now for this exact product/condition/size and why."}
+
+CRITICAL RULES:
+- For Amazon: price field = actual current selling price after discounts. If item is £20 after 50% off from £40, price=20.00, amazon_rrp=40.00, amazon_current=20.00, amazon_discount_pct=50
+- For eBay/Vinted: only include listings matching condition "${selCond}" ${selSize?'and size '+selSize:''}
+- refs must be real URLs from search results (no placeholders with ...)
+- Set price=0 if marketplace is not suitable for this product`;
     const pr=await callAPI({model:'claude-sonnet-4-6',max_tokens:3000,tools:[{type:'web_search_20250305',name:'web_search'}],messages:[{role:'user',content:pp}]});
     if(pr._rl){showRL(pr._rt);return;}
     const pt=(pr.content||[]).map(c=>c.type==='text'?c.text:'').filter(Boolean).join('');
@@ -740,6 +781,7 @@ function renderMP(){
       <div class="badge ${cc}" style="position:absolute;top:5px;right:5px;font-size:8px">${d.confidence}</div>
       <div class="mpn" style="margin-top:${ib?'10px':'0'}">${mico(mp.k)} ${mp.l}</div>
       <div class="mpp">£${d.price.toFixed(2)}</div>
+      ${mp.k==='amazon'&&d.amazon_rrp&&d.amazon_rrp>d.price?`<div style="font-size:10px;color:var(--watch);margin-bottom:2px">⚡ RRP £${d.amazon_rrp.toFixed(2)} · ${d.amazon_discount_pct||0}% off</div>`:(mp.k==='amazon'&&d.amazon_rrp?'<div style="font-size:10px;color:var(--muted)">No current discount</div>':'')}
       <div class="mpr">£${d.range_low.toFixed(2)}–£${d.range_high.toFixed(2)}</div>
       <div class="mpv" style="color:${hr?'var(--buy)':'var(--watch)'}">${hr?'✅ '+d.refs.length+' listing'+(d.refs.length>1?'s':''):'⚠️ Estimated'}</div>
       <div class="mpck">✓</div>
@@ -747,10 +789,18 @@ function renderMP(){
   }).join('');
   let rh='';
   if(aiPrices.reasoning)rh+=`<div style="font-size:11px;color:var(--muted);padding:3px 0 7px;line-height:1.5">💡 ${esc(aiPrices.reasoning)}</div>`;
+  // Amazon discount warning
+  const amz=aiPrices.amazon;
+  if(amz&&amz.amazon_rrp&&amz.amazon_rrp>amz.amazon_current&&amz.amazon_discount_pct>0){
+    rh+=`<div style="background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.2);border-radius:var(--rs);padding:9px 12px;margin-bottom:9px;font-size:12px">
+      ⚡ <strong>Amazon discount detected:</strong> RRP £${amz.amazon_rrp.toFixed(2)} → current price £${amz.amazon_current.toFixed(2)} (${amz.amazon_discount_pct}% off).
+      This means Amazon is already selling it cheap — your resale margin may be squeezed. The price shown (£${amz.price.toFixed(2)}) is the <strong>current discounted price</strong>, not RRP.
+    </div>`;
+  }
   mps.forEach(mp=>{
     const d=aiPrices[mp.k];if(!d||d.price<=0)return;
     const refs=(d.refs||[]).filter(r=>r.url&&r.url.startsWith('http'));
-    rh+=`<div style="margin-bottom:9px"><div class="rghd"><span>${mico(mp.k)} ${mp.l} · £${d.price.toFixed(2)}</span></div><a href="${surl(mp.k,detected?.name||'')}" target="_blank" rel="noopener" class="sb">🔍 Search ${mp.l} UK ↗</a>${refs.map(r=>`<a href="${r.url}" target="_blank" rel="noopener" class="rl"><span class="rlt">${esc(r.title||'View listing')}</span><span class="rlp">£${parseFloat(r.price).toFixed(2)} ↗</span></a>`).join('')}${!refs.length?'<div style="font-size:10px;color:var(--muted)">No specific listings — use search above</div>':''}</div>`;
+    rh+=`<div style="margin-bottom:9px"><div class="rghd"><span>${mico(mp.k)} ${mp.l} · £${d.price.toFixed(2)}</span></div><a href="${surl(mp.k,detected?.name||'',document.getElementById('f-size')?.value||'')}" target="_blank" rel="noopener" class="sb">🔍 Search ${mp.l} UK ↗</a>${refs.map(r=>`<a href="${r.url}" target="_blank" rel="noopener" class="rl"><span class="rlt">${esc(r.title||'View listing')}</span><span class="rlp">£${parseFloat(r.price).toFixed(2)} ↗</span></a>`).join('')}${!refs.length?'<div style="font-size:10px;color:var(--muted)">No specific listings — use search above</div>':''}</div>`;
   });
   document.getElementById('refp').innerHTML=rh;
   document.getElementById('mpsec').style.display='block';
@@ -815,7 +865,7 @@ function scoreRisk(f,calc){
 // ── SAVE DEAL ────────────────────────────────────────────────
 function saveDeal(){
   if(!curRes)return;const{f,calc,risk,rec,expl}=curRes;
-  deals.unshift({id:Date.now().toString(),product_name:f.name,store_name:f.store,buy_price:f.buyPrice,estimated_resale_price:f.resalePrice,marketplace:f.marketplace,category:f.category,condition:f.condition,notes:f.notes,shipping_cost:f.shipping,packaging_cost:f.packaging,marketplace_fee_percentage:f.feePct,marketplace_fixed_fee:f.fixedFee,quantity:f.qty,gross_profit:calc.gp,total_fees:calc.tf,net_profit:calc.np,roi_percentage:calc.roi,break_even_price:calc.be,total_profit:calc.tp,risk_level:risk.level,risk_reasons:risk.reasons,recommendation:rec,explanation:expl,ai_prices:aiPrices,status:'active',created_at:new Date().toISOString()});
+  deals.unshift({id:Date.now().toString(),product_name:f.name,store_name:f.store,buy_price:f.buyPrice,estimated_resale_price:f.resalePrice,marketplace:f.marketplace,category:f.category,condition:f.condition,notes:f.notes,size:document.getElementById('f-size')?.value.trim()||'',shipping_cost:f.shipping,packaging_cost:f.packaging,marketplace_fee_percentage:f.feePct,marketplace_fixed_fee:f.fixedFee,quantity:f.qty,gross_profit:calc.gp,total_fees:calc.tf,net_profit:calc.np,roi_percentage:calc.roi,break_even_price:calc.be,total_profit:calc.tp,risk_level:risk.level,risk_reasons:risk.reasons,recommendation:rec,explanation:expl,ai_prices:aiPrices,status:'active',created_at:new Date().toISOString()});
   persist();showToast('✅ Deal saved!');setTimeout(()=>goTo('dashboard'),700);
 }
 
@@ -956,7 +1006,7 @@ function showDet(id){
     </div>
     <div class="dg">
       <div>
-        ${ap?`<div class="ds"><div class="dsh">🤖 AI Price Research</div><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:8px">${mps.map(k=>{const mp=ap[k];if(!mp||mp.price<=0)return `<div style="padding:8px;background:var(--bg);border-radius:5px;border:1px solid var(--border);opacity:.4"><div style="font-size:10px;color:var(--muted);font-weight:700">${lb[k]}</div><div style="font-size:11px;color:var(--muted)">Not suitable</div></div>`;const isSel=d.marketplace.toLowerCase().includes(k==='facebook'?'facebook':k);const refs=(mp.refs||[]).filter(r=>r.url&&r.url.startsWith('http'));const cc={high:'b-buy',medium:'b-watch',low:'b-avoid'}[mp.confidence]||'b-watch';return `<div style="padding:8px;background:var(--bg);border-radius:5px;border:1px solid ${isSel?'var(--accent)':'var(--border)'}"><div style="font-size:10px;color:${isSel?'var(--accent)':'var(--muted)'};font-weight:700">${mico(k)} ${lb[k]}${isSel?' ✓':''}</div><div style="font-size:15px;font-weight:700">£${mp.price.toFixed(2)}</div><div style="font-size:10px;color:var(--muted)">£${mp.range_low.toFixed(2)}–£${mp.range_high.toFixed(2)}</div><span class="badge ${cc}" style="margin:3px 0;display:inline-flex">${mp.confidence}</span><a href="${surl(k,d.product_name)}" target="_blank" rel="noopener" class="sb" style="padding:3px 6px;font-size:10px;margin-top:3px">🔍 Search ↗</a>${refs.map(r=>`<a href="${r.url}" target="_blank" rel="noopener" class="rl" style="margin-top:2px"><span class="rlt">${esc(r.title||'View')}</span><span class="rlp">£${parseFloat(r.price).toFixed(2)} ↗</span></a>`).join('')}</div>`;}).join('')}</div>${ap.reasoning?`<div style="font-size:11px;color:var(--muted);padding:7px;background:var(--surface2);border-radius:5px">💡 ${esc(ap.reasoning)}</div>`:''}</div>`:''}
+        ${ap?`<div class="ds"><div class="dsh">🤖 AI Price Research</div><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:8px">${mps.map(k=>{const mp=ap[k];if(!mp||mp.price<=0)return `<div style="padding:8px;background:var(--bg);border-radius:5px;border:1px solid var(--border);opacity:.4"><div style="font-size:10px;color:var(--muted);font-weight:700">${lb[k]}</div><div style="font-size:11px;color:var(--muted)">Not suitable</div></div>`;const isSel=d.marketplace.toLowerCase().includes(k==='facebook'?'facebook':k);const refs=(mp.refs||[]).filter(r=>r.url&&r.url.startsWith('http'));const cc={high:'b-buy',medium:'b-watch',low:'b-avoid'}[mp.confidence]||'b-watch';return `<div style="padding:8px;background:var(--bg);border-radius:5px;border:1px solid ${isSel?'var(--accent)':'var(--border)'}"><div style="font-size:10px;color:${isSel?'var(--accent)':'var(--muted)'};font-weight:700">${mico(k)} ${lb[k]}${isSel?' ✓':''}</div><div style="font-size:15px;font-weight:700">£${mp.price.toFixed(2)}</div><div style="font-size:10px;color:var(--muted)">£${mp.range_low.toFixed(2)}–£${mp.range_high.toFixed(2)}</div><span class="badge ${cc}" style="margin:3px 0;display:inline-flex">${mp.confidence}</span><a href="${surl(k,d.product_name,d.size||'')}" target="_blank" rel="noopener" class="sb" style="padding:3px 6px;font-size:10px;margin-top:3px">🔍 Search ↗</a>${refs.map(r=>`<a href="${r.url}" target="_blank" rel="noopener" class="rl" style="margin-top:2px"><span class="rlt">${esc(r.title||'View')}</span><span class="rlp">£${parseFloat(r.price).toFixed(2)} ↗</span></a>`).join('')}</div>`;}).join('')}</div>${ap.reasoning?`<div style="font-size:11px;color:var(--muted);padding:7px;background:var(--surface2);border-radius:5px">💡 ${esc(ap.reasoning)}</div>`:''}</div>`:''}
         <div class="ds"><div class="dsh">Profit Breakdown</div>
           <div class="dr"><span class="drl">Buy Price</span><span>£${d.buy_price.toFixed(2)}</span></div>
           <div class="dr"><span class="drl">Est. Resale</span><span>£${d.estimated_resale_price.toFixed(2)}</span></div>
