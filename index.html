@@ -718,16 +718,15 @@ async function callAPI(body){
     }
     throw new Error(JSON.stringify(d.error));
   }
-  // Count how many individual web_search tool calls were made
-  // Each one costs $0.01 regardless of how many tokens the result contains
+  // Web search cost = $0.01 per search call.
+  // Our prompt has exactly 5 numbered search instructions (eBay, Amazon, Vinted, CEX, Depop).
+  // Vision/identify call never uses web search so searchCount = 0 for that call.
   let searchCount = 0;
-  if(hasWebSearch && d.content){
-    searchCount = d.content.filter(c => c.type==='tool_use' && c.name==='web_search').length;
-    // Fallback: if we can't count from content but web search was enabled, assume at least 1
-    if(searchCount === 0) searchCount = 1;
-  }
+  if(hasWebSearch) searchCount = 5;
+
   if(d.usage) trackUsage(d.usage, searchCount);
   return d;
+}
 }
 
 // ── RATE LIMIT ───────────────────────────────────────────────
