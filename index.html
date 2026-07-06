@@ -618,25 +618,62 @@ function fmtP(v){return `<span class="${v>=0?'pos':'neg'}">£${v.toFixed(2)}</sp
 function showToast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('on');setTimeout(()=>t.classList.remove('on'),2800);}
 
 // ── COST TRACKER ─────────────────────────────────────────────
-// Sonnet 4 pricing: $3/M input tokens, $15/M output tokens
-const COST_IN=3/1000000, COST_OUT=15/1000000;
+// claude-sonnet-4-6 pricing (as of mid-2025):
+//   Input:  $3.00 per 1M tokens
+//   Output: $15.00 per 1M tokens
+//   Web search tool: $10.00 per 1000 searches (i.e. $0.01 per search call)
+//   Cache write: $3.75/1M, cache read: $0.30/1M (when prompt caching active)
+const COST_IN     = 3.00  / 1_000_000;
+const COST_OUT    = 15.00 / 1_000_000;
+const COST_CACHE_W= 3.75  / 1_000_000;
+const COST_CACHE_R= 0.30  / 1_000_000;
+const COST_SEARCH = 0.01; // per web search invocation
+
 let sessionCost=0, sessionScans=0, scanCost=0;
-function trackUsage(usage){
-  if(!usage)return;
-  const cost=(usage.input_tokens||0)*COST_IN+(usage.output_tokens||0)*COST_OUT;
-  scanCost+=cost; sessionCost+=cost;
+let scanBreakdown={tokens_in:0, tokens_out:0, searches:0, cache_r:0, cache_w:0};
+
+function trackUsage(usage, hasWebSearch){
+  if(!usage) return;
+  const inp   = (usage.input_tokens||0) - (usage.cache_creation_input_tokens||0) - (usage.cache_read_input_tokens||0);
+  const out   = usage.output_tokens||0;
+  const cw    = usage.cache_creation_input_tokens||0;
+  const cr    = usage.cache_read_input_tokens||0;
+  // Count web search tool uses from server_tool_use blocks if available
+  const searches = hasWebSearch ? 1 : 0; // at minimum 1 call if web search was used
+  const cost = inp*COST_IN + out*COST_OUT + cw*COST_CACHE_W + cr*COST_CACHE_R + searches*COST_SEARCH;
+  scanCost += cost;
+  sessionCost += cost;
+  scanBreakdown.tokens_in  += inp;
+  scanBreakdown.tokens_out += out;
+  scanBreakdown.searches   += searches;
+  scanBreakdown.cache_r    += cr;
+  scanBreakdown.cache_w    += cw;
   updateCostBadge();
 }
-function startScanCost(){ scanCost=0; }
+
+function startScanCost(){
+  scanCost=0;
+  scanBreakdown={tokens_in:0,tokens_out:0,searches:0,cache_r:0,cache_w:0};
+}
+
 function updateCostBadge(){
-  const el=document.getElementById('cost-badge');
-  if(el) el.textContent='~$'+sessionCost.toFixed(4)+' total';
-  const se=document.getElementById('scan-cost-display');
-  if(se) se.textContent='This scan: ~$'+scanCost.toFixed(4)+' (£'+((scanCost*0.79)).toFixed(4)+')';
+  const gbp = scanCost * 0.79;
+  const el = document.getElementById('cost-badge');
+  if(el) el.textContent = '~$' + sessionCost.toFixed(4);
+  const se = document.getElementById('scan-cost-display');
+  if(se){
+    const parts = [];
+    if(scanBreakdown.tokens_in)  parts.push(scanBreakdown.tokens_in.toLocaleString()+' in');
+    if(scanBreakdown.tokens_out) parts.push(scanBreakdown.tokens_out.toLocaleString()+' out');
+    if(scanBreakdown.searches)   parts.push(scanBreakdown.searches+' search'+(scanBreakdown.searches>1?'es':''));
+    se.innerHTML = `Last scan: <strong>~$${scanCost.toFixed(4)}</strong> (~£${gbp.toFixed(4)})` +
+      (parts.length ? `<br><span style="font-size:9px;opacity:.7">${parts.join(' · ')}</span>` : '');
+  }
 }
 
 // ── API CALL ─────────────────────────────────────────────────
 async function callAPI(body){
+  const hasWebSearch = !!(body.tools?.some(t=>t.type==='web_search_20250305'));
   const r=await fetch('/api/claude',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':getKey()},body:JSON.stringify(body)});
   const d=await r.json();
   if(d.error){
@@ -648,8 +685,17 @@ async function callAPI(body){
     }
     throw new Error(JSON.stringify(d.error));
   }
-  // Track token usage for cost display
-  if(d.usage) trackUsage(d.usage);
+  // Count actual web search tool uses from content blocks
+  if(hasWebSearch && d.content){
+    const actualSearches = d.content.filter(c=>c.type==='tool_use'&&c.name==='web_search').length;
+    if(actualSearches > 1){
+      // Add extra search cost for calls beyond the 1 already counted
+      const extra = (actualSearches - 1) * COST_SEARCH;
+      scanCost += extra; sessionCost += extra;
+      scanBreakdown.searches += (actualSearches - 1);
+    }
+  }
+  if(d.usage) trackUsage(d.usage, hasWebSearch);
   return d;
 }
 
