@@ -618,84 +618,115 @@ function fmtP(v){return `<span class="${v>=0?'pos':'neg'}">£${v.toFixed(2)}</sp
 function showToast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('on');setTimeout(()=>t.classList.remove('on'),2800);}
 
 // ── COST TRACKER ─────────────────────────────────────────────
-// claude-sonnet-4-6 pricing (as of mid-2025):
-//   Input:  $3.00 per 1M tokens
-//   Output: $15.00 per 1M tokens
-//   Web search tool: $10.00 per 1000 searches (i.e. $0.01 per search call)
-//   Cache write: $3.75/1M, cache read: $0.30/1M (when prompt caching active)
-const COST_IN     = 3.00  / 1_000_000;
-const COST_OUT    = 15.00 / 1_000_000;
-const COST_CACHE_W= 3.75  / 1_000_000;
-const COST_CACHE_R= 0.30  / 1_000_000;
-const COST_SEARCH = 0.01; // per web search invocation
+// claude-sonnet-4-6 pricing:
+//   Input tokens:              $3.00 / 1M
+//   Output tokens:             $15.00 / 1M
+//   Cache write tokens:        $3.75 / 1M
+//   Cache read tokens:         $0.30 / 1M
+//   Web search per call:       $0.01 (i.e. $10 / 1000 searches)
+//
+// NOTE: The usage object from Anthropic includes ALL tokens (prompt +
+// tool results + tool calls). Web search results returned as tool_result
+// blocks are billed as input tokens and ARE included in input_tokens.
+// The only thing NOT in usage is the per-search flat fee.
+const COST_IN      = 3.00  / 1_000_000;
+const COST_OUT     = 15.00 / 1_000_000;
+const COST_CACHE_W = 3.75  / 1_000_000;
+const COST_CACHE_R = 0.30  / 1_000_000;
+const COST_SEARCH  = 0.01; // per individual web_search tool invocation
 
-let sessionCost=0, sessionScans=0, scanCost=0;
-let scanBreakdown={tokens_in:0, tokens_out:0, searches:0, cache_r:0, cache_w:0};
+let sessionCost = 0, sessionScans = 0, scanCost = 0;
+let scanBreakdown = {tokens_in:0, tokens_out:0, searches:0, cache_r:0, cache_w:0};
 
-function trackUsage(usage, hasWebSearch){
+function calcCost(usage, searchCount){
+  if(!usage) return 0;
+  // Anthropic usage fields:
+  //   input_tokens                  = all non-cached input tokens
+  //   output_tokens                 = all output tokens
+  //   cache_creation_input_tokens   = tokens written to cache this turn
+  //   cache_read_input_tokens       = tokens read from cache this turn
+  // input_tokens already INCLUDES tool result tokens billed as input
+  const raw_in = usage.input_tokens               || 0;
+  const raw_out= usage.output_tokens              || 0;
+  const cw     = usage.cache_creation_input_tokens|| 0;
+  const cr     = usage.cache_read_input_tokens    || 0;
+  // non-cached input = total input minus cached portions
+  const inp    = Math.max(0, raw_in - cw - cr);
+  const searchFee = searchCount * COST_SEARCH;
+  return inp*COST_IN + raw_out*COST_OUT + cw*COST_CACHE_W + cr*COST_CACHE_R + searchFee;
+}
+
+function trackUsage(usage, searchCount){
   if(!usage) return;
-  const inp   = (usage.input_tokens||0) - (usage.cache_creation_input_tokens||0) - (usage.cache_read_input_tokens||0);
-  const out   = usage.output_tokens||0;
-  const cw    = usage.cache_creation_input_tokens||0;
-  const cr    = usage.cache_read_input_tokens||0;
-  // Count web search tool uses from server_tool_use blocks if available
-  const searches = hasWebSearch ? 1 : 0; // at minimum 1 call if web search was used
-  const cost = inp*COST_IN + out*COST_OUT + cw*COST_CACHE_W + cr*COST_CACHE_R + searches*COST_SEARCH;
-  scanCost += cost;
-  sessionCost += cost;
+  const cost = calcCost(usage, searchCount);
+  const cw = usage.cache_creation_input_tokens||0;
+  const cr = usage.cache_read_input_tokens||0;
+  const inp= Math.max(0,(usage.input_tokens||0)-cw-cr);
+  scanCost      += cost;
+  sessionCost   += cost;
   scanBreakdown.tokens_in  += inp;
-  scanBreakdown.tokens_out += out;
-  scanBreakdown.searches   += searches;
+  scanBreakdown.tokens_out += (usage.output_tokens||0);
+  scanBreakdown.searches   += searchCount;
   scanBreakdown.cache_r    += cr;
   scanBreakdown.cache_w    += cw;
+  // Debug log — open browser DevTools console to compare with Anthropic dashboard
+  console.log('[DealMargin cost]', {
+    inp, out:usage.output_tokens, cw, cr, searches:searchCount,
+    cost_usd: cost.toFixed(6),
+    usage_raw: usage
+  });
   updateCostBadge();
 }
 
 function startScanCost(){
-  scanCost=0;
-  scanBreakdown={tokens_in:0,tokens_out:0,searches:0,cache_r:0,cache_w:0};
+  scanCost = 0;
+  scanBreakdown = {tokens_in:0, tokens_out:0, searches:0, cache_r:0, cache_w:0};
 }
 
 function updateCostBadge(){
   const gbp = scanCost * 0.79;
   const el = document.getElementById('cost-badge');
-  if(el) el.textContent = '~$' + sessionCost.toFixed(4);
+  if(el) el.textContent = '$' + sessionCost.toFixed(4);
   const se = document.getElementById('scan-cost-display');
   if(se){
     const parts = [];
     if(scanBreakdown.tokens_in)  parts.push(scanBreakdown.tokens_in.toLocaleString()+' in');
     if(scanBreakdown.tokens_out) parts.push(scanBreakdown.tokens_out.toLocaleString()+' out');
-    if(scanBreakdown.searches)   parts.push(scanBreakdown.searches+' search'+(scanBreakdown.searches>1?'es':''));
-    se.innerHTML = `Last scan: <strong>~$${scanCost.toFixed(4)}</strong> (~£${gbp.toFixed(4)})` +
+    if(scanBreakdown.searches)   parts.push(scanBreakdown.searches+' web search'+(scanBreakdown.searches!==1?'es':''));
+    if(scanBreakdown.cache_r)    parts.push(scanBreakdown.cache_r.toLocaleString()+' cached');
+    se.innerHTML =
+      `Last scan: <strong>$${scanCost.toFixed(4)}</strong> (~£${gbp.toFixed(4)})` +
       (parts.length ? `<br><span style="font-size:9px;opacity:.7">${parts.join(' · ')}</span>` : '');
   }
 }
 
 // ── API CALL ─────────────────────────────────────────────────
 async function callAPI(body){
-  const hasWebSearch = !!(body.tools?.some(t=>t.type==='web_search_20250305'));
-  const r=await fetch('/api/claude',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':getKey()},body:JSON.stringify(body)});
-  const d=await r.json();
+  const hasWebSearch = !!(body.tools?.some(t => t.type === 'web_search_20250305'));
+  const r = await fetch('/api/claude', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json','x-api-key':getKey()},
+    body: JSON.stringify(body)
+  });
+  const d = await r.json();
   if(d.error){
-    const t=d.error?.type||'';
+    const t = d.error?.type || '';
     if(t==='exceeded_limit'||t==='rate_limit_error'||t==='overloaded_error'){
-      const ra=d.error?.resetsAt||d.error?.resolved?.limit?.resets_at;
-      const rt=ra?new Date(typeof ra==='number'?ra*1000:ra).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}):'soon';
-      const err=new Error('Rate limit');err._rl=true;err._rt=rt;throw err;
+      const ra = d.error?.resetsAt || d.error?.resolved?.limit?.resets_at;
+      const rt = ra ? new Date(typeof ra==='number'?ra*1000:ra).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}) : 'soon';
+      const err = new Error('Rate limit'); err._rl=true; err._rt=rt; throw err;
     }
     throw new Error(JSON.stringify(d.error));
   }
-  // Count actual web search tool uses from content blocks
+  // Count how many individual web_search tool calls were made
+  // Each one costs $0.01 regardless of how many tokens the result contains
+  let searchCount = 0;
   if(hasWebSearch && d.content){
-    const actualSearches = d.content.filter(c=>c.type==='tool_use'&&c.name==='web_search').length;
-    if(actualSearches > 1){
-      // Add extra search cost for calls beyond the 1 already counted
-      const extra = (actualSearches - 1) * COST_SEARCH;
-      scanCost += extra; sessionCost += extra;
-      scanBreakdown.searches += (actualSearches - 1);
-    }
+    searchCount = d.content.filter(c => c.type==='tool_use' && c.name==='web_search').length;
+    // Fallback: if we can't count from content but web search was enabled, assume at least 1
+    if(searchCount === 0) searchCount = 1;
   }
-  if(d.usage) trackUsage(d.usage, hasWebSearch);
+  if(d.usage) trackUsage(d.usage, searchCount);
   return d;
 }
 
