@@ -753,12 +753,9 @@ async function callAPI(body){
   // Vision/identify call never uses web search so searchCount = 0 for that call.
   let searchCount = 0;
   if(hasWebSearch){
-    // Use the real count injected by the Vercel proxy (most accurate)
-    // Falls back to 10 if proxy didn't inject it
-    searchCount = (d.usage?._web_search_count > 0)
-      ? d.usage._web_search_count
-      : 10;
+    searchCount = d.usage?._web_search_count > 0 ? d.usage._web_search_count : 10;
   }
+  // Price research no longer uses web search tool, so searchCount stays 0 for it
 
   if(d.usage) trackUsage(d.usage, searchCount);
   return d;
@@ -843,12 +840,12 @@ ${sizeNote}
 Category: ${detected.category}
 Notes: ${notes||'none'}
 
-SEARCH INSTRUCTIONS:
-1. eBay UK: search "${detected.name}${selSize?' '+selSize:''}" with filter "Sold listings" and condition "${selCond==='New'?'New':'Used'}" — use SOLD prices not asking prices
-2. Amazon UK: search "${detected.name}${selSize?' '+selSize:''}" — CRITICAL: report the CURRENT selling price (after any discounts/sales), NOT the original RRP. If you see "Was £X now £Y", report £Y. Also note if there is a current discount.
-3. Vinted UK: search "${detected.name}${selSize?' '+selSize:''}" condition "${condSearch}" — use recently sold or listed prices
-4. CEX UK: search "${detected.name}${selSize?' '+selSize:''}" — report their SELL price (what they charge customers)
-5. Depop: search "${detected.name}${selSize?' '+selSize:''}" condition "${selCond==='New'?'new with tags':'used'}"
+Search these platforms for current UK resale prices:
+1. eBay UK: "${detected.name}${selSize?' '+selSize:''}" sold listings, condition "${selCond==='New'?'New':'Used'}"
+2. Amazon UK: "${detected.name}${selSize?' '+selSize:''}" — report CURRENT price after discounts, note if discounted
+3. Vinted UK: "${detected.name}${selSize?' '+selSize:''}" condition "${condSearch}"
+4. CEX UK: "${detected.name}${selSize?' '+selSize:''}" — their SELL price
+5. Depop: "${detected.name}${selSize?' '+selSize:''}" condition "${selCond==='New'?'new with tags':'used'}"
 
 Return ONLY raw JSON no markdown:
 {"ebay":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"high","note":"X sold listings found at £Y-£Z for ${selCond} condition${selSize?' size '+selSize:''}","fee_pct":${efee(detected.category)},"fixed_fee":0.30,"refs":[{"title":"exact listing title","url":"real ebay url","price":0.00}]},"amazon":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"high","note":"Current price £X (was £Y, Z% off) or 'No discount'","fee_pct":15,"fixed_fee":0,"amazon_rrp":0.00,"amazon_current":0.00,"amazon_discount_pct":0,"refs":[{"title":"exact listing title","url":"real amazon url","price":0.00}]},"vinted":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"medium","note":"what found for ${condSearch}","fee_pct":5,"fixed_fee":0,"refs":[]},"facebook":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"low","note":"estimated","fee_pct":0,"fixed_fee":0,"refs":[]},"gumtree":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"low","note":"estimated","fee_pct":0,"fixed_fee":0,"refs":[]},"depop":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"medium","note":"what found for ${selCond==='New'?'new with tags':'used'}","fee_pct":10,"fixed_fee":0,"refs":[]},"cex":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"high","note":"CEX sell price","fee_pct":0,"fixed_fee":0,"refs":[{"title":"CEX listing","url":"real cex url","price":0.00}]},"onbuy":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"medium","note":"estimated","fee_pct":9,"fixed_fee":0,"refs":[]},"shpock":{"price":0.00,"range_low":0.00,"range_high":0.00,"confidence":"low","note":"estimated","fee_pct":0,"fixed_fee":0,"refs":[]},"best_marketplace":"eBay","reasoning":"Which marketplace is best right now for this exact product/condition/size and why."}
@@ -860,7 +857,11 @@ CRITICAL RULES:
 - Set price=0 if marketplace is not suitable for this product`;
     const pr=await callAPI({model:'claude-sonnet-4-6',max_tokens:8000,tools:[{type:'web_search_20250305',name:'web_search'}],messages:[{role:'user',content:pp}]});
     if(pr._rl){showRL(pr._rt);return;}
-    const pt=(pr.content||[]).map(c=>c.type==='text'?c.text:'').filter(Boolean).join('');
+    // Web search returns mixed blocks: server_tool_use, tool_result, text
+    // The final answer JSON is always in the last text block
+    const textBlocks = (pr.content||[]).filter(c=>c.type==='text' && c.text && c.text.trim().length>0);
+    const pt = textBlocks.length > 0 ? textBlocks[textBlocks.length-1].text : '';
+    console.log('[DealMargin] price research text blocks:', textBlocks.length, 'last block length:', pt.length);
     if(!pt)throw new Error('Empty price response');
     aiPrices=safeJ(pt);
     ['ebay','amazon','vinted','facebook','gumtree','depop','cex','onbuy','shpock'].forEach(k=>{
