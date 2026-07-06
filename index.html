@@ -207,12 +207,23 @@ nav{background:var(--surface);border-bottom:1px solid var(--border);padding:0 14
           <button class="stab" id="tab-manual" onclick="setMode('manual')">✏️ Manual</button>
         </div>
         <div id="mode-photo">
-          <div class="uz" id="uz" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleDrop(event)">
-            <input type="file" accept="image/*" id="img-input" onchange="handleFile(this.files[0])">
+          <!-- Hidden file input — triggered by button click -->
+          <input type="file" accept="image/*" id="img-input" style="display:none">
+          <!-- Drop zone for desktop drag & drop -->
+          <div class="uz" id="uz"
+            ondragover="event.preventDefault();this.classList.add('drag')"
+            ondragleave="this.classList.remove('drag')"
+            ondrop="handleDrop(event)"
+            onclick="document.getElementById('img-input').click()">
             <div style="font-size:26px;margin-bottom:5px">📦</div>
-            <div style="font-size:13px;font-weight:600;margin-bottom:2px">Drop product photo here</div>
-            <div style="font-size:11px;color:var(--muted)">or tap to browse · JPG PNG WEBP</div>
+            <div style="font-size:13px;font-weight:600;margin-bottom:2px">Tap to choose a photo</div>
+            <div style="font-size:11px;color:var(--muted)">JPG · PNG · WEBP · or drag &amp; drop</div>
           </div>
+          <!-- Explicit upload button for mobile -->
+          <button class="btn btn-ghost btn-full" style="margin:8px 13px 0;width:calc(100% - 26px)"
+            onclick="document.getElementById('img-input').click()">
+            📷 Choose Photo from Camera / Gallery
+          </button>
           <div class="pvw" id="pvw"><img id="pimg" src="" alt=""><button class="pch" onclick="resetPhoto()">✕ Change</button></div>
         </div>
         <div id="mode-barcode" style="display:none">
@@ -512,6 +523,7 @@ function handleFile(file){
       const kb=Math.round(imgB64.length*.75/1024);
       document.getElementById('pimg').src=comp;
       document.getElementById('uz').style.display='none';
+      const ubtn=document.getElementById('upload-btn');if(ubtn)ubtn.style.display='none';
       document.getElementById('pvw').style.display='block';
       document.getElementById('ddc').style.display='block';
       document.getElementById('condwrap').style.display='block';
@@ -519,7 +531,14 @@ function handleFile(file){
     };img.src=e.target.result;
   };reader.readAsDataURL(file);
 }
-function resetPhoto(){imgB64=null;document.getElementById('uz').style.display='block';document.getElementById('pvw').style.display='none';document.getElementById('pimg').src='';document.getElementById('img-input').value='';}
+function resetPhoto(){
+  imgB64=null;
+  document.getElementById('uz').style.display='block';
+  const ubtn=document.getElementById('upload-btn');if(ubtn)ubtn.style.display='flex';
+  document.getElementById('pvw').style.display='none';
+  document.getElementById('pimg').src='';
+  document.getElementById('img-input').value='';
+}
 
 // ── BARCODE SCANNER ──────────────────────────────────────────
 async function startScan(){
@@ -735,7 +754,6 @@ async function callAPI(body){
 
   if(d.usage) trackUsage(d.usage, searchCount);
   return d;
-}
 }
 
 // ── RATE LIMIT ───────────────────────────────────────────────
@@ -1144,4 +1162,8 @@ window.addEventListener('resize',fixLayout);fixLayout();
 // ── INIT ─────────────────────────────────────────────────────
 goTo('analyze');renderDB();
 if(!getKey())setTimeout(()=>openModal('km'),800);
+// Attach file input listener here so handleFile is definitely defined
+document.getElementById('img-input').addEventListener('change', function(){
+  if(this.files && this.files[0]) handleFile(this.files[0]);
+});
 </script></body></html>
